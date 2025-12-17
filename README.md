@@ -4,4 +4,6 @@ Thanks to Daan Wierstra, Tom Schaul and their colleges for the paper: Natural Ev
 <br>
 How to use: <br>
 - Run server.py first (if you have to change the port, also change in index.html) <br>
-- Open index.html
+- Open index.html <br>
+
+Already include saving and loading models.
