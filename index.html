@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>NES Neural Network Demo</title>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background: #222; color: #eee; display: flex; flex-direction: column; align-items: center; }
+        .container { display: flex; gap: 20px; margin-top: 20px; }
+        .panel { background: #333; padding: 20px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); }
+        canvas { background: #111; border: 2px solid #555; image-rendering: pixelated; }
+        
+        /* Controls Styling */
+        .controls { margin-bottom: 10px; display: flex; align-items: center; gap: 10px; background: #444; padding: 10px; border-radius: 5px;}
+        input[type=range] { width: 200px; cursor: pointer; }
+        
+        #stats-box { width: 400px; }
+        .stat-row { display: flex; justify-content: space-between; margin-bottom: 10px; }
+        .chart-container { width: 100%; height: 150px; background: #222; border: 1px solid #444; position: relative; }
+        svg { width: 100%; height: 100%; }
+        path { fill: none; stroke: #4caf50; stroke-width: 2; }
+    </style>
+</head>
+<body>
+
+    <h1>NES Optimization Demo</h1>
+
+    <!-- Speed Control -->
+    <div class="controls">
+        <label>Simulation Speed:</label>
+        <input type="range" id="speedSlider" min="0" max="200" value="0">
+        <span id="speedLabel">Max Speed</span>
+    </div>
+
+    <div class="container">
+        <!-- Simulation View -->
+        <div class="panel">
+            <canvas id="simCanvas" width="560" height="560"></canvas>
+        </div>
+
+        <!-- Statistics View -->
+        <div class="panel" id="stats-box">
+            <h2>Statistics</h2>
+            <div class="stat-row"><span>Generation:</span> <span id="genDisplay">0</span></div>
+            <div class="stat-row"><span>Time Step:</span> <span id="stepDisplay">0 / 160</span></div>
+            <div class="stat-row"><span>Success Rate:</span> <span id="successDisplay">0%</span></div>
+            
+            <h3>Success Rate History</h3>
+            <div class="chart-container">
+                <svg viewBox="0 0 100 100" preserveAspectRatio="none">
+                    <path id="chartLine" d="M0,100" />
+                </svg>
+            </div>
+        </div>
+    </div>
+
+<script>
+        // --- CONFIGURATION ---
+        const WS_URL = "ws://localhost:4726";
+        const CANVAS_SIZE = 560;
+        
+        const canvas = document.getElementById('simCanvas');
+        const ctx = canvas.getContext('2d');
+        const ws = new WebSocket(WS_URL);
+        
+        // Input Handling
+        const slider = document.getElementById('speedSlider');
+        const speedLabel = document.getElementById('speedLabel');
+
+        slider.oninput = function() {
+            let delayVal = parseInt(this.value);
+            if(delayVal === 0) {
+                speedLabel.innerText = "Max Speed";
+            } else {
+                speedLabel.innerText = delayVal + "ms delay";
+            }
+            if(ws.readyState === WebSocket.OPEN){
+                ws.send(JSON.stringify({type: "speed", value: delayVal / 1000})); 
+            }
+        }
+
+        // --- STATE VARIABLES ---
+        let latestData = null;   // Stores the most recent simulation frame
+        let lastStats = null;    // Stores the most recent stats
+        let scale = 20;
+        let history = [];
+
+        // 1. RECEIVE DATA (Don't draw here, just store it)
+        ws.onmessage = (event) => {
+            const msg = JSON.parse(event.data);
+
+            if (msg.type === 'update') {
+                latestData = msg; // Just update the variable
+                // Update text counters immediately (text doesn't flicker like canvas)
+                document.getElementById('genDisplay').innerText = msg.gen;
+                document.getElementById('stepDisplay').innerText = msg.step;
+            } else if (msg.type === 'stats') {
+                updateChart(msg.success_rate);
+                document.getElementById('successDisplay').innerText = (msg.success_rate * 100).toFixed(1) + "%";
+            }
+        };
+
+        // 2. THE GAME LOOP (Draws 60 times per second, smooth & stable)
+        function gameLoop() {
+            if (latestData) {
+                render(latestData);
+            }
+            // Request the next frame recursively
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Start the loop
+        requestAnimationFrame(gameLoop);
+
+        // 3. RENDER FUNCTION
+        function render(data) {
+            scale = CANVAS_SIZE / data.grid_size;
+
+            // Clear Background
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw Danger Zone (Background)
+            ctx.fillStyle = "#222"; 
+            ctx.fillRect(0,0, canvas.width, canvas.height);
+
+            // Draw Safe Zone
+            const sz = data.safe_zone;
+            ctx.fillStyle = "rgba(76, 175, 80, 0.3)"; 
+            ctx.fillRect(sz.x * scale, sz.y * scale, sz.w * scale, sz.h * scale);
+            ctx.strokeStyle = "#4caf50";
+            ctx.lineWidth = 2;
+            ctx.strokeRect(sz.x * scale, sz.y * scale, sz.w * scale, sz.h * scale);
+
+            // Draw Agents
+            ctx.globalAlpha = 0.6; 
+            
+            data.positions.forEach((pos, index) => {
+                ctx.fillStyle = data.colors[index];
+                
+                // Draw Square
+                // Using Math.floor to snap to pixels helps crispness
+                ctx.fillRect(
+                    Math.floor(pos[0] * scale), 
+                    Math.floor(pos[1] * scale), 
+                    Math.ceil(scale),  // Use ceil to ensure no tiny gaps between cells
+                    Math.ceil(scale)
+                );
+            });
+            
+            ctx.globalAlpha = 1.0; 
+        }
+
+        function updateChart(rate) {
+            history.push(rate);
+            const path = document.getElementById('chartLine');
+            let d = "";
+            const w = 100 / Math.max(10, history.length - 1);
+            history.forEach((val, i) => {
+                const x = i * w;
+                const y = 100 - (val * 100); 
+                d += (i === 0 ? "M" : "L") + `${x},${y} `;
+            });
+            path.setAttribute("d", d);
+        }
+    </script>
+</body>
+</html>
