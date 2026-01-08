@@ -15,11 +15,25 @@ import os
 
 # CONFIGURATION
 # ====================================
+EVAL_MODE = False # If True, run in evaluation mode (no learning, just show the best policy)
 GRID_SIZE = 28
-EPISODE_STEPS = 50
-POP_SIZE = 200
-SAFE_ZONE = {'x': 14, 'y': 0, 'w': 14, 'h': 28} # the top left corner and the size from it
+EPISODE_STEPS = 84
+POP_SIZE = 525
+SAFE_ZONE = {'x': 4, 'y': 7, 'w': 1, 'h': 1} # the top left corner and the size from it
 CHECKPOINT_FILE = "nes_checkpoint.npz"
+
+# Top Right Quarter corner
+# SAFE_ZONE = {'x': 14, 'y': 0, 'w': 14, 'h': 14} # the top left corner and the size from it
+# CHECKPOINT_FILE = "nes_checkpoint_quarter_right_top.npz"
+
+# Center
+# SAFE_ZONE = {'x': 7, 'y': 7, 'w': 14, 'h': 14} # the top left corner and the size from it
+# CHECKPOINT_FILE = "nes_checkpoint_center.npz"
+
+# A point
+# SAFE_ZONE = {'x': 27, 'y': 0, 'w': 1, 'h': 1} # the top left corner and the size from it
+# CHECKPOINT_FILE = "nes_checkpoint_a_point.npz"
+
 # ====================================
 
 # INTIALIZATION
@@ -39,6 +53,37 @@ def get_fitness(final_pos): # Fitness will be +1 if inside safe zone; otherwise,
     if sx <= x < sx + sw and sy <= y < sy + sh:
         return 1
     return -1
+
+def get_fitness(final_pos): # Fitness will be calculate base on the distance to the center of safe zone
+    x, y = final_pos
+    sx, sy, sw, sh = SAFE_ZONE['x'], SAFE_ZONE['y'], SAFE_ZONE['w'], SAFE_ZONE['h']
+    center_x = sx + sw / 2
+    center_y = sy + sh / 2
+    dist = np.sqrt((x - center_x) ** 2 + (y - center_y) ** 2)
+    # Normalize distance to [0, 1], then invert it so closer is better
+    max_dist = np.sqrt((GRID_SIZE) ** 2 + (GRID_SIZE) ** 2)
+    fitness = 1 - (dist / max_dist)
+    return fitness
+
+def get_fitness(final_pos): # Fitness will be calculate base on the distance to the center of safe zone
+    # In safe zone -> 1
+    # Out safe zone -> using distance to safe zone center
+    x, y = final_pos
+    sx, sy, sw, sh = SAFE_ZONE['x'], SAFE_ZONE['y'], SAFE_ZONE['w'], SAFE_ZONE['h']
+    center_x = sx + sw / 2
+    center_y = sy + sh / 2
+    dist = np.sqrt((x - center_x) ** 2 + (y - center_y) ** 2)
+    # Normalize distance to [0, 1], then invert it so closer is better
+    max_dist = np.sqrt((GRID_SIZE) ** 2 + (GRID_SIZE) ** 2)
+    if safe_zone_check(x, y):
+        fitness = 1
+    else:
+        fitness = 1 - (dist / max_dist)
+    return fitness
+
+def safe_zone_check(x, y):
+    sx, sy, sw, sh = SAFE_ZONE['x'], SAFE_ZONE['y'], SAFE_ZONE['w'], SAFE_ZONE['h']
+    return sx <= x < sx + sw and sy <= y < sy + sh
 
 async def handler(websocket): # Transfer data using websocket for visualization
     print("CONNECTED")
@@ -116,7 +161,10 @@ async def handler(websocket): # Transfer data using websocket for visualization
             fitness_scores = [get_fitness(p) for p in positions]
 
             # Metrics
-            success_count = sum(1 for f in fitness_scores if f > 0)
+            success_count = 0
+            for p in positions:
+                if safe_zone_check(p[0], p[1]):
+                    success_count += 1
             success_rate = success_count / POP_SIZE
             mean_fitness = np.mean(fitness_scores)
 
@@ -130,11 +178,12 @@ async def handler(websocket): # Transfer data using websocket for visualization
             await websocket.send(json.dumps(end_stats))
             print(f"Gen {generation}: Success Rate {success_rate*100:.1f}%")
 
-            # 4. NES update
-            optimizer.tell(fitness_scores)
-            # Save periodically
-            if generation > 0 and generation % 10 == 0:
-                optimizer.save(CHECKPOINT_FILE)
+            # 4. NES update only if the EVAL_MODE is False
+            if not EVAL_MODE:
+                optimizer.tell(fitness_scores)
+                # Save periodically
+                if generation > 0 and generation % 10 == 0:
+                    optimizer.save(CHECKPOINT_FILE)
             generation += 1
             await asyncio.sleep(0.5) # Delay between generations
     except websockets.exceptions.ConnectionClosed:
@@ -152,7 +201,8 @@ if __name__ == "__main__":
     try:
         loop.run_until_complete(main())
     except KeyboardInterrupt:
-        print("\nStopping... Saving final checkpoint.")
-        optimizer.save(CHECKPOINT_FILE)
+        print("\nStopping...")
+        if not EVAL_MODE: # Only save if not in eval mode
+            optimizer.save(CHECKPOINT_FILE)
         print("Goodbye!")
         
